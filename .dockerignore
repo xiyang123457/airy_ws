@@ -1,0 +1,12 @@
+# 精简 Docker 构建上下文：排除 git 元数据与本机编译产物
+# 注意：不能排除 src/，否则二阶段构建期无法 COPY 源码
+
+**/.git
+
+/build/
+/install/
+/log/
+
+**/__pycache__/
+**/*.pyc
+.vscode/

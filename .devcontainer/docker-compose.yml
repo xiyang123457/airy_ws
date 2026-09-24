@@ -1,0 +1,35 @@
+# 容器怎么运行：用项目自己的 Dockerfile 构建镜像，
+# 挂载本地工作空间到容器 /workspace，host 网络接收雷达 UDP 报文。
+
+services:
+  airy:
+    build:
+      # 构建上下文指向工作空间根（airy_ws/），这样 Dockerfile 才能 COPY src/
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        # 最小版 ROS2 基础镜像（任务书指定）。注意不要加 osrf/ 前缀：
+        # osrf/ros 仓库没有 ros-base / ros-core 这两个 tag，写了会 403。
+        BASE_IMAGE: ros:humble-ros-base
+        # 改 true 即开启二阶段：构建期自动 colcon build，编译失败则构建失败
+        BUILD_WORKSPACE: "false"
+
+    image: airy_ros2:humble
+    container_name: airy_ros2
+    working_dir: /workspace
+
+    # 挂载整个工作空间：源码与编译产物都在宿主机上，改代码无需重建镜像
+    volumes:
+      - ..:/workspace
+
+    # 雷达通过 UDP 上报点云（MSOP 6699 / DIFOP 7788），host 网络最省事。
+    # 注意：host 模式下不能再用 ports 做端口映射，二者互斥。
+    network_mode: host
+
+    # 让容器启动后保持运行，而不是执行完就退出
+    tty: true
+    stdin_open: true
+    command: sleep infinity
+
+    environment:
+      ROS_DOMAIN_ID: 0

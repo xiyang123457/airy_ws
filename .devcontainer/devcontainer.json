@@ -1,0 +1,17 @@
+{
+  "name": "airy_ws (ROS2 Humble + rslidar_sdk)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "airy",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-iot.vscode-ros",
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-python.python"
+      ]
+    }
+  }
+}

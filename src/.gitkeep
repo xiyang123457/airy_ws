@@ -1,0 +1,6 @@
+# src/ 用于放置 ROS2 包源码：
+#   rslidar_sdk/  —— 雷达驱动主包
+#   rslidar_msg/  —— 雷达消息定义包
+#
+# 拉取方式见项目根目录 README.md「获取驱动源码」一节。
+# 本文件仅为占位，保证目录存在（Dockerfile 需要 COPY src/）。
