@@ -12,7 +12,7 @@ services:
         # osrf/ros 仓库没有 ros-base / ros-core 这两个 tag，写了会 403。
         BASE_IMAGE: ros:humble-ros-base
         # 改 true 即开启二阶段：构建期自动 colcon build，编译失败则构建失败
-        BUILD_WORKSPACE: "false"
+        BUILD_WORKSPACE: "true"
 
     image: airy_ros2:humble
     container_name: airy_ros2

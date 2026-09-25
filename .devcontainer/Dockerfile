@@ -32,13 +32,25 @@ ENV ROS_DISTRO=${ROS_DISTRO} \
 SHELL ["/bin/bash", "-c"]
 
 # -----------------------------------------------------------------------------
-# 1. 驱动编译所需依赖
+# 1. 驱动编译与运行所需依赖
 #    build-essential / cmake / git  ：rs_driver 需要 C++14 工具链（-std=c++14）
 #    libyaml-cpp-dev               ：rslidar_sdk 解析 config.yaml（最小版镜像不含）
 #    libpcap-dev                   ：rs_driver 默认 ENABLE_PCAP_PARSE，链接 -lpcap
 #    libeigen3-dev                 ：仅 ENABLE_TRANSFORM=ON 时需要，预先装好
 #    python3-colcon-common-extensions：colcon build / colcon 命令集
 #    iputils-ping / net-tools / tcpdump：排查雷达 UDP（6699/7788）通信
+#
+#    ros-humble-rmw-cyclonedds-cpp ：rslidar_sdk 自带的 humble_start.py 开头会检测这个包。
+#                                    未安装时它会调用 getpass 索要 sudo 密码去装，
+#                                    而容器内没有 sudo，launch 会一直停在密码提示上。
+#                                    装上后该分支直接跳过。
+#    ros-humble-rviz2              ：同一个 launch 文件会启动 rviz2 节点。
+#                                    launch_ros 在构造 LaunchDescription 阶段就解析 package，
+#                                    包不存在会直接抛异常，连驱动节点都起不来，
+#                                    所以这是"能启动 launch 文件"的硬前提，不是可选项。
+#                                    容器无图形界面时 rviz2 仍会报连不上 display 后退出，
+#                                    属预期现象，不影响驱动节点运行。
+#
 #    依赖安装与 apt 缓存清理合并在同一层，减小镜像体积
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,6 +65,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iputils-ping \
         net-tools \
         tcpdump \
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-rviz2 \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -92,7 +106,7 @@ WORKDIR /workspace
 # -----------------------------------------------------------------------------
 
 # 构建参数：false = 一阶段（只装环境）；true = 二阶段（构建期编译）
-ARG BUILD_WORKSPACE=false
+ARG BUILD_WORKSPACE=true
 
 # 把宿主机 src/（rslidar_sdk、rslidar_msg）拷进镜像。
 # Dockerfile 语法不支持"条件 COPY"，所以无论开关取值这行都会执行；

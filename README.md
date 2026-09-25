@@ -83,7 +83,11 @@ ros2 launch rslidar_sdk humble_start.py
 | `host_address` | 本机接收 IP |
 | `group_address` | 组播地址（单播时留空） |
 
+仓库自带的 `config.yaml` 用的是上游默认值 `lidar_type: RSM1`，接 AIRY 之前需要改成 `RSAIRY`（rs_driver v1.5.20 已支持该型号）。
+
 ## 五、查看点云
+
+镜像已装 rviz2，直接运行：
 
 ```bash
 rviz2
@@ -91,13 +95,7 @@ rviz2
 
 添加 `PointCloud2`，Topic 选择 `/rslidar_points`，Fixed Frame 设为 `rslidar`。
 
-默认基础镜像 `ros:humble-ros-base` 不含 rviz2，先在容器内装上：
-
-```bash
-apt-get update && apt-get install -y ros-humble-rviz2
-```
-
-或者直接用自带 rviz2 的镜像重建，见第七节。
+容器内没有 X11 显示时，rviz2 会因加载不了 Qt 的 `xcb` 平台插件而退出（`Could not load the Qt platform plugin "xcb"`），驱动节点不受影响。需要图形界面时配置 X11 转发，或在有显示的宿主上运行。
 
 ## 六、宿主网络调优（重要）
 
@@ -114,9 +112,26 @@ sudo sysctl -w net.core.rmem_max=8388608
 echo "net.core.rmem_max=8388608" | sudo tee -a /etc/sysctl.conf
 ```
 
+调之前先看当前值：
+
+```bash
+sysctl net.core.rmem_max
+```
+
+Ubuntu 22.04 默认 `212992`，需要调。Docker Desktop on Windows 的 WSL2 内核默认已是 `4194304`，够用，不必再调。
+
+驱动启动时会打印两行作为佐证：
+
+```
+Original receive buffer size: 212992 bytes
+After setting: receive buffer size: 8388608 bytes
+```
+
+这两个数是 `getsockopt(SO_RCVBUF)` 的返回值，Linux 内核会把它翻倍显示。驱动在 `input_sock_select.hpp` 里把请求值下限写死为 `4194304`，所以第二行 8388608 对应实际生效的 4MB，等于驱动要求的下限，属正常。若第二行只有 425984（即 2 × 212992），说明内核把请求截断到了默认值，此时才需要调 `rmem_max`。
+
 ## 七、切换基础镜像
 
-默认 `ros:humble-ros-base`，任务书指定的最小版，只含 ROS2 核心。需要 rviz2 可视化时：
+默认 `ros:humble-ros-base`，任务书指定的最小版，只含 ROS2 核心；rviz2 与 CycloneDDS 由 Dockerfile 单独补装。需要 PCL、Gazebo 等完整工具链时再切换：
 
 ```bash
 docker compose -f .devcontainer/docker-compose.yml build \
@@ -156,8 +171,47 @@ Windows 上 Docker Desktop 的 `network_mode: host` 实际是 WSL2 的虚拟网�
 | 找不到 `rs_driver` | `src/rs_driver` 子模块为空，需重新拉取 |
 | 找不到 `yaml-cpp` | 缺 `libyaml-cpp-dev`（Dockerfile 已安装） |
 | 收不到点云 | 检查防火墙、IP/端口配置、`rmem_max`、host 网络 |
-| `ros2: command not found` | 未加载环境：`source /opt/ros/humble/setup.bash` |
+| `ros2: command not found` | 环境未加载。交互式进容器会自动 source；用 `bash -c` 一次性执行不会，需手动 `source /opt/ros/humble/setup.bash` |
 | `colcon: command not found` | 缺 `python3-colcon-common-extensions`（Dockerfile 已安装） |
+| `ros2 topic echo` 报 `xmlrpc.client.Fault ... !rclpy.ok()` | ros2 daemon 上下文失效，见下文同名小节 |
+| `ros2 launch` 停在索要 sudo 密码的提示 | 镜像未装 `ros-humble-rmw-cyclonedds-cpp`，见下文《`humble_start.py` 起不来》 |
+| `ros2 launch` 报找不到 `rviz2` | 镜像未装 rviz2，见下文《`humble_start.py` 起不来》 |
+
+### `ros2 topic echo` 报 `!rclpy.ok()`
+
+`ros2 topic echo` 与 `ros2 topic list` 使用 `NodeStrategy`，默认把请求经 xmlrpc 转发给长驻的 ros2 daemon。daemon 是跨 `docker exec` 会话共享的独立进程，其 rclpy 上下文失效后，所有走 daemon 的子命令都会收到：
+
+```
+xmlrpc.client.Fault: <Fault 1: "<class 'RuntimeError'>:!rclpy.ok()">
+```
+
+`ros2 topic pub` 不受影响，它使用 `DirectNode`，在自身进程内建节点，因此出现「pub 正常、echo 报错」属于预期，不是环境损坏。
+
+两种处理方式：
+
+```bash
+# 重启 daemon，下一条 ros2 命令会自动把它拉起
+ros2 daemon stop
+
+# 完全绕开 daemon
+ros2 topic echo --no-daemon /chatter std_msgs/msg/String
+```
+
+推荐后者。daemon 在容器内的收益有限，它本是为多条 ros2 命令共享节点、加快 CLI 响应而设计，代价是跨会话的共享状态。`list`、`info`、`echo` 均支持 `--no-daemon`，`hz` 不支持。
+
+### `humble_start.py` 起不来
+
+该 launch 文件有两个前置依赖，`ros:humble-ros-base` 自身都不满足，Dockerfile 已显式安装。
+
+其一是 `ros-humble-rmw-cyclonedds-cpp`。文件开头的 `install_cyclone_dds()` 用 `dpkg -s` 检测该包，未安装时会调用 `getpass` 索要 sudo 密码，而容器内没有 sudo，进程会停在交互提示上。装上后该分支直接跳过，输出 `DDS is already installed.`。
+
+其二是 rviz2。第 36 行硬编码启动 rviz2 节点，`launch_ros` 在构造 `LaunchDescription` 阶段就解析 package，包不存在会直接抛异常，连驱动节点都起不来。这是「能启动 launch 文件」的硬前提，不是可选项。
+
+用旧镜像或自建基础镜像遇到这两种报错时，在容器内补装：
+
+```bash
+apt-get update && apt-get install -y ros-humble-rmw-cyclonedds-cpp ros-humble-rviz2
+```
 
 ## 十一、获取驱动源码
 
