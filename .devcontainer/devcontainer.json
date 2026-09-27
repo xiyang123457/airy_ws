@@ -3,6 +3,18 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "airy",
   "workspaceFolder": "/workspace",
+  // 与 docker-compose.yml 的 user: 指向同一个用户（镜像里由 Dockerfile 的
+  // USER_UID/USER_GID 创建）。容器内跑的 VS Code Server、终端、任务、调试
+  // 全部以该用户身份运行，产出的文件在宿主上属主就是当前用户，
+  // 不会再出现 build/COLCON_IGNORE 那种"宿主身份删不掉 root 文件"的 EACCES。
+  // 取值优先级（devcontainer CLI 源码 createContainerProperties）：
+  //   remoteUser > compose 的 user: > root
+  // 二者填的是同一个 UID，写在这里只是把意图写明确。
+  "remoteUser": "airy",
+  // 默认 true 会在容器创建时把该用户的 UID/GID 改成宿主用户的。
+  // 我们已经在构建期（Dockerfile 的 USER_UID/USER_GID）对齐过了，
+  // 关掉，免去运行时再做一次需要 root 的改动。
+  "updateRemoteUserUID": false,
   "shutdownAction": "stopCompose",
   "customizations": {
     "vscode": {

@@ -15,7 +15,13 @@
 # 构建：
 #   docker compose -f .devcontainer/docker-compose.yml build
 #   或直接：
-#   docker build -f .devcontainer/Dockerfile --build-arg BUILD_WORKSPACE=true -t airy_ros2:humble .
+#   docker build -f .devcontainer/Dockerfile \
+#       --build-arg BUILD_WORKSPACE=true \
+#       --build-arg USER_UID=$(id -u) \
+#       --build-arg USER_GID=$(id -g) \
+#       -t airy_ros2:humble .
+#   直接用 docker build 时必须显式传 USER_UID/USER_GID，否则容器用户是默认的
+#   1000，与宿主 UID 不一致时又会退回"文件属主对不上"的老问题。
 # =============================================================================
 
 ARG BASE_IMAGE=ros:humble-ros-base
@@ -70,13 +76,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
+# 1.5 建一个与宿主 UID/GID 对齐的普通用户
+#
+#    【解决什么】宿主 VS Code 报
+#      EACCES: permission denied, unlink '.../airy_ws/build/COLCON_IGNORE'
+#    根因：ros:humble-ros-base 默认以 root 运行，而 compose 把宿主 airy_ws/
+#    整个挂到 /workspace。容器里 root 编译出的 build/ install/ log/ 落到宿主上，
+#    属主也是 root；宿主用户既不是文件属主、对目录也没有写权限，
+#    VS Code / rm / git 一动它们就被内核拒绝（COLCON_IGNORE 只是恰好第一个被删的）。
+#    按宿主 UID/GID 建同名用户后，容器内新建的文件在宿主上就属于当前用户，
+#    build/、install/、log/ 想删就删，问题从根上消失。
+#
+#    【为什么用 ARG】UID/GID 是宿主相关的值，写死在镜像里换台机器就错位，
+#    所以由 docker-compose.yml 构建时传入（build.args 的 USER_UID / USER_GID）。
+#
+#    【为什么不写 USER 指令切成该用户】构建期的 colcon build（第 3 节）仍要以
+#    root 跑才能保证 /opt/airy 的写入；运行时换成谁由 compose 的 user: 决定，
+#    两件事互不干扰。
+#
+#    【若构建报 GID/UID already exists】说明所选基础镜像已经带了 1000 号用户，
+#    把下面两条命令去掉，compose 里 user: 直接用那个已有用户即可。
+# -----------------------------------------------------------------------------
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+RUN set -eux; \
+    groupadd --gid "${USER_GID}" airy; \
+    useradd --uid "${USER_UID}" --gid "${USER_GID}" \
+            --create-home --shell /bin/bash airy
+
+# -----------------------------------------------------------------------------
 # 2. 容器内开箱即用的 ROS2 环境
 #    - 交互式 shell 自动 source ROS2 与工作空间 overlay
 #    - 文件存在时才 source，避免不存在时报错
+#    - 两个用户各写一份，谁进容器都能开箱即用：
+#        airy → compose 配了 user:，docker exec 与 VS Code 终端默认就是它，
+#               读 /home/airy/.bashrc
+#        root → 需要提权时 docker exec -u 0 -it airy_ros2 bash，
+#               读 /root/.bashrc（tcpdump 抓包、临时 apt-get install 会用到）
+#    - 结尾把家目录属主还给 airy：上面的 .bashrc 是 root 身份写进去的
 # -----------------------------------------------------------------------------
-RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc \
- && echo "[ -f /opt/airy/install/setup.bash ] && source /opt/airy/install/setup.bash" >> /root/.bashrc \
- && echo "[ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash" >> /root/.bashrc
+RUN for H in /root /home/airy; do \
+        echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> "${H}/.bashrc"; \
+        echo "[ -f /opt/airy/install/setup.bash ] && source /opt/airy/install/setup.bash" >> "${H}/.bashrc"; \
+        echo "[ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash" >> "${H}/.bashrc"; \
+    done \
+ && chown -R airy:airy /home/airy
 
 WORKDIR /workspace
 
@@ -155,6 +200,16 @@ RUN if [ "${BUILD_WORKSPACE}" = "true" ]; then \
     else \
         echo "[info] BUILD_WORKSPACE=false，跳过构建期编译（一阶段：进容器后手动 colcon build）"; \
     fi
+
+# -----------------------------------------------------------------------------
+# 4. 放开 /opt/airy 的读与执行权限
+#    第 3 节的编译是 root 干的，产物属主也是 root；运行时容器以 airy 身份跑，
+#    不放开权限的话 source /opt/airy/install/setup.bash、ros2 launch 会报
+#    Permission denied。用 a+rX 而不是 a+rwx：X 只给目录和本来就有执行位的
+#    文件加执行权限，普通文件不会被误设成可执行。
+#    （放在最后是有意的：它自成一薄层，改动本层不影响上面耗时的 apt 缓存）
+# -----------------------------------------------------------------------------
+RUN chmod -R a+rX /opt/airy
 
 # 容器默认命令：
 #   - compose 中会用 command: sleep infinity 覆盖它，让容器常驻不退出

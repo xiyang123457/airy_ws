@@ -53,7 +53,7 @@ docker exec -it airy_ros2 bash
 
 ## 三、编译
 
-进入容器后：
+镜像已在构建阶段自动编译（见第八节，`/opt/airy/install` 已有产物），通常无需手动编译，直接 launch 即可。若改动了 `src/` 下源码需要重新编译，进入容器后：
 
 ```bash
 cd /workspace
@@ -144,10 +144,18 @@ docker compose -f .devcontainer/docker-compose.yml build \
 
 ## 八、二阶段：构建期自动编译
 
-默认关闭。开启后 `docker build` 阶段即完成 `colcon build`，任一包编译失败则构建中断：
+`docker-compose.yml` 中 `BUILD_WORKSPACE` 已设为 `"true"`，即**默认开启**。直接 `docker compose build`（无需额外参数）即会在构建阶段完成 `colcon build`，任一包编译失败则构建中断：
 
 ```bash
+# 以下两种写法等价（compose 里默认已是 true）
+docker compose -f .devcontainer/docker-compose.yml build
 docker compose -f .devcontainer/docker-compose.yml build --build-arg BUILD_WORKSPACE=true
+```
+
+如需改回手动编译（进容器后再 `colcon build`，见第三节），把 `docker-compose.yml` 里的 `BUILD_WORKSPACE` 改成 `"false"`，或显式传参：
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml build --build-arg BUILD_WORKSPACE=false
 ```
 
 产物固化在镜像的 `/opt/airy/install`，开终端自动 source。
@@ -215,12 +223,12 @@ apt-get update && apt-get install -y ros-humble-rmw-cyclonedds-cpp ros-humble-rv
 
 ## 十一、获取驱动源码
 
-若 `src/` 下还没有驱动源码，执行：
+`rslidar_msg` 已随本仓库（airy_ws）一起提供，位于 `src/rslidar_msg`，无需单独拉取。
+若 `src/rslidar_sdk` 缺失或为空，执行（注意 `rslidar_sdk` 目录若已存在但为空，先 `rm -rf rslidar_sdk` 再 clone）：
 
 ```bash
 cd airy_ws/src
 git clone --recursive https://github.com/RoboSense-LiDAR/rslidar_sdk.git
-git clone -b master https://github.com/RoboSense-LiDAR/rslidar_msg.git
 ```
 
 `--recursive` 不可省略：`rslidar_sdk` 通过子模块引入 `src/rs_driver`，

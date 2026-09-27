@@ -13,10 +13,28 @@ services:
         BASE_IMAGE: ros:humble-ros-base
         # 改 true 即开启二阶段：构建期自动 colcon build，编译失败则构建失败
         BUILD_WORKSPACE: "true"
+        # 传给 Dockerfile，用于创建一个与宿主 UID/GID 一致的容器用户（用户名 airy）。
+        # 默认 1000:1000 —— 本机 xiyang 正是 1000:1000，直接命中，无需额外配置。
+        # 换机器或 UID 不同时，在本文件同级目录放一个 .env 写：
+        #   LOCAL_UID=<id -u 的结果>
+        #   LOCAL_GID=<id -g 的结果>
+        # 或在执行 compose 命令前 export 同名环境变量。
+        USER_UID: "${LOCAL_UID:-1000}"
+        USER_GID: "${LOCAL_GID:-1000}"
 
     image: airy_ros2:humble
     container_name: airy_ros2
     working_dir: /workspace
+
+    # 容器（docker exec、VS Code 打开的终端、任务、调试）一律以宿主用户身份运行。
+    # 这是 build/COLCON_IGNORE 报 EACCES 的正解：容器内不再产出 root 属主的文件，
+    # /workspace 下新建的 build/ install/ log/ 在宿主上就属于当前用户，
+    # VS Code、rm、git 都能正常读写删。
+    # 必须与 Dockerfile 里的 USER_UID/USER_GID 用同一组变量：容器用户与镜像内
+    # 用户的 UID 一旦对不上，家目录、文件权限又会错位。
+    # 代价：容器内没有 root，不能直接 apt-get install；抓包（tcpdump）等需要
+    #      特权的操作改用：docker exec -u 0 -it airy_ros2 bash
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
 
     # 挂载整个工作空间：源码与编译产物都在宿主机上，改代码无需重建镜像
     volumes:
