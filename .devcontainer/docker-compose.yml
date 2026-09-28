@@ -39,6 +39,12 @@ services:
     # 挂载整个工作空间：源码与编译产物都在宿主机上，改代码无需重建镜像
     volumes:
       - ..:/workspace
+      # rviz2 看可视化点云必须的一条：rslidar_sdk 的 humble_start.py 会顺手拉起 rviz2，
+      # 它需要访问宿主的 X 服务器。宿主是 X11 会话（XDG_SESSION_TYPE=x11，DISPLAY=:1），
+      # 所以 rviz2 窗口能直接弹在宿主桌面上。宿主侧每次重新登录后授权一次：
+      #   xhost +SI:localuser:xiyang
+      # 用 uid 授权即可，无需挂 ~/.Xauthority（容器内进程 uid=1000，与宿主 xiyang 相同）。
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
     # 雷达通过 UDP 上报点云（MSOP 6699 / DIFOP 7788），host 网络最省事。
     # 注意：host 模式下不能再用 ports 做端口映射，二者互斥。
@@ -51,3 +57,5 @@ services:
 
     environment:
       ROS_DOMAIN_ID: 0
+      # rviz2 画到哪个 X 服务器：默认沿用宿主当前 DISPLAY，取不到时退回 :1（本机实测值）。
+      DISPLAY: "${DISPLAY:-:1}"

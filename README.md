@@ -66,11 +66,57 @@ source install/setup.bash
 
 ## 四、运行雷达
 
+### 4.1 网络准备（接雷达前必做）
+
+AIRY 出厂默认网络参数（RoboSense 官方产品手册）：
+
+| 项目 | 默认值 |
+|---|---|
+| 雷达 IP | `192.168.1.200` |
+| MSOP 点云端口 | `6699` |
+| DIFOP 设备信息端口 | `7788` |
+| 电脑 IP（官方约定） | `192.168.1.102` |
+
+AIRY 是**雷达主动往电脑发包**：雷达上电后靠 ARP 报文发现同网段的电脑，再把数据推过去。所以电脑 IP 必须与雷达同网段，用官方约定值 `.102` 最省事：
+
+```bash
+# 本机有线网卡是拓展坞提供的 USB 网卡，名为 enx00e602015dae
+sudo nmcli con mod "有线连接 1" con-name airy ifname enx00e602015dae \
+  ipv4.method manual ipv4.addresses 192.168.1.102/24 ipv4.never-default yes
+sudo nmcli con up airy
+ip -br addr show enx00e602015dae      # 回读确认 192.168.1.102/24
+```
+
+三个要点：
+
+- **不要设网关**：`ipv4.never-default yes`，否则有线口会抢默认路由，把 WiFi 上网断掉
+- 雷达 IP 若被改过（不再是 `.200`），用 4.2 的 ARP 抓包找出真实地址
+- 需要改雷达自身的 IP 或端口：电脑设好同网段后，浏览器打开 `http://192.168.1.200` 进雷达 Web 端修改
+
+### 4.2 链路验证（先抓包，再启动驱动）
+
+```bash
+ping 192.168.1.200                                     # 雷达在线？
+sudo tcpdump -i enx00e602015dae -n udp port 6699       # 有包 = 数据正在进来
+sudo tcpdump -i enx00e602015dae -n arp                 # IP 不确定时，看雷达的 ARP 请求里带的是哪个地址
+```
+
+`tcpdump` 抓到包是唯一可信的判据。驱动不报错不等于链路正常——没有数据时驱动照样持续运行、点云为空。
+
+### 4.3 启动
+
 ROS2 各版本的 launch 文件格式不同，仓库同时提供 `start.py` 与 `humble_start.py`。
 本项目使用 Humble，请指定对应版本：
 
 ```bash
+source /opt/ros/humble/setup.bash && source /opt/airy/install/setup.bash
 ros2 launch rslidar_sdk humble_start.py
+```
+
+该 launch 会**同时拉起 rviz2**，窗口直接弹在宿主桌面上（X11 转发配置见 `.devcontainer/docker-compose.yml` 注释；宿主每次重新登录后需执行一次 `xhost +SI:localuser:xiyang`）。另开一个终端确认点云频率：
+
+```bash
+ros2 topic hz /rslidar_points        # 正常约 10 Hz
 ```
 
 按实际雷达修改 `src/rslidar_sdk/config/config.yaml`：
@@ -83,11 +129,11 @@ ros2 launch rslidar_sdk humble_start.py
 | `host_address` | 本机接收 IP |
 | `group_address` | 组播地址（单播时留空） |
 
-仓库自带的 `config.yaml` 用的是上游默认值 `lidar_type: RSM1`，接 AIRY 之前需要改成 `RSAIRY`（rs_driver v1.5.20 已支持该型号）。
+本项目已把 `config.yaml` 的 `lidar_type` 改为 `RSAIRY`（上游默认值是 `RSM1`）；换用其他型号时按上表相应修改。`host_address` / `group_address` 保持 `0.0.0.0` 即可——AIRY 驱动直接绑定任意地址收包，不需要在这里写本机 IP。
 
 ## 五、查看点云
 
-镜像已装 rviz2，直接运行：
+镜像已装 rviz2。`humble_start.py` 会自动启动它并加载本包自带的配置（`share/rslidar_sdk/rviz/rviz2.rviz`）；手动启动则是：
 
 ```bash
 rviz2
@@ -95,7 +141,7 @@ rviz2
 
 添加 `PointCloud2`，Topic 选择 `/rslidar_points`，Fixed Frame 设为 `rslidar`。
 
-容器内没有 X11 显示时，rviz2 会因加载不了 Qt 的 `xcb` 平台插件而退出（`Could not load the Qt platform plugin "xcb"`），驱动节点不受影响。需要图形界面时配置 X11 转发，或在有显示的宿主上运行。
+X11 转发已在 `.devcontainer/docker-compose.yml` 里配好（挂载 `/tmp/.X11-unix` 并传入 `DISPLAY`），宿主执行一次 `xhost +SI:localuser:xiyang` 即可。未授权时 rviz2 会因加载不了 Qt 的 `xcb` 平台插件而退出（`Could not load the Qt platform plugin "xcb"` 或 `cannot connect to X server`），驱动节点不受影响。
 
 ## 六、宿主网络调优（重要）
 
@@ -178,7 +224,8 @@ Windows 上 Docker Desktop 的 `network_mode: host` 实际是 WSL2 的虚拟网�
 |---|---|
 | 找不到 `rs_driver` | `src/rs_driver` 子模块为空，需重新拉取 |
 | 找不到 `yaml-cpp` | 缺 `libyaml-cpp-dev`（Dockerfile 已安装） |
-| 收不到点云 | 检查防火墙、IP/端口配置、`rmem_max`、host 网络 |
+| 收不到点云 / `/rslidar_points` 没有频率 | 按 4.2 先抓包：`sudo tcpdump -i enx00e602015dae -n udp port 6699`。**有包**说明链路通，问题在 `lidar_type`（须 `RSAIRY`）或 `rmem_max`；**没包**则查电脑 IP 是否与雷达同网段（官方约定 `192.168.1.102`）、雷达 IP 是否被改过（用 ARP 抓包确认）、`network_mode: host` 是否还在 |
+| rviz2 报 `Could not load the Qt platform plugin "xcb"` / `cannot connect to X server` | 宿主未授权 X11。执行 `xhost +SI:localuser:xiyang`；若仍失败，确认 `docker-compose.yml` 里 `/tmp/.X11-unix` 挂载与 `DISPLAY` 已生效（改过 compose 需 `up -d --force-recreate`）。驱动节点不受影响，点云照常发布 |
 | `ros2: command not found` | 环境未加载。交互式进容器会自动 source；用 `bash -c` 一次性执行不会，需手动 `source /opt/ros/humble/setup.bash` |
 | `colcon: command not found` | 缺 `python3-colcon-common-extensions`（Dockerfile 已安装） |
 | `ros2 topic echo` 报 `xmlrpc.client.Fault ... !rclpy.ok()` | ros2 daemon 上下文失效，见下文同名小节 |
