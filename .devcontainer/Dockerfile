@@ -195,7 +195,7 @@ RUN if [ "${BUILD_WORKSPACE}" = "true" ]; then \
         colcon build \
             --symlink-install \
             --parallel-workers "$(nproc)" \
-            --cmake-args -DCMAKE_BUILD_TYPE=Release; \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_IMU_DATA_PARSE=ON \
         echo "source /opt/airy/install/setup.bash" >> /root/.bashrc; \
     else \
         echo "[info] BUILD_WORKSPACE=false，跳过构建期编译（一阶段：进容器后手动 colcon build）"; \

@@ -33,6 +33,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         Node(namespace='rslidar_sdk', package='rslidar_sdk', executable='rslidar_sdk_node', output='screen'),
-        Node(namespace='rviz2', package='rviz2', executable='rviz2', arguments=['-d', rviz_config])
+        Node(namespace='rviz2', package='rviz2', executable='rviz2', arguments=['-d', rviz_config]),
+        # IMU 坐标轴变换节点：订阅 /rslidar_imu_data，按 R 变换后发布 /livox/imu
+        # 注意：不能加 namespace，否则输出话题会变成 /rslidar_sdk/livox/imu
+        Node(package='airy_imu_transform', executable='imu_transform_node', output='screen')
     ])
 

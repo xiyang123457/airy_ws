@@ -4,3 +4,16 @@ log/
 PROJECT.md
 .vscode/
 .codebuddy/
+plan.md
+docs/任务一-雷达数据录制-阶段拆解.md
+plan/任务一-雷达数据录制-阶段拆解.md
+plan/
+
+# rosbag2 录制数据：体积大、二进制、每次录制都变，不入库
+/airy_calib/
+/airy_smoke/
+*.db3
+*.mcap
+# Python 编译缓存
+__pycache__/
+*.py[cod]
